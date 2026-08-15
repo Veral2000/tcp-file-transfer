@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 
 namespace tcpft::protocol {
 namespace {
@@ -60,7 +61,7 @@ std::vector<std::uint8_t> encode_header(MessageType type, std::uint64_t payload_
     append_u32(header, kMagic);
     append_u16(header, kVersion);
     header.push_back(static_cast<std::uint8_t>(type));
-    header.push_back(0U); // reserved
+    header.push_back(0U);
     append_u64(header, payload_size);
     return header;
 }
@@ -74,9 +75,7 @@ void send_message(network::TcpSocket& socket, MessageType type,
     }
     const auto header = encode_header(type, static_cast<std::uint64_t>(payload.size()));
     socket.send_all(header.data(), header.size());
-    if (!payload.empty()) {
-        socket.send_all(payload.data(), payload.size());
-    }
+    if (!payload.empty()) socket.send_all(payload.data(), payload.size());
 }
 
 MessageHeader receive_header(network::TcpSocket& socket) {
@@ -87,7 +86,7 @@ MessageHeader receive_header(network::TcpSocket& socket) {
     const std::uint32_t magic = read_u32(header, pos);
     const std::uint16_t version = read_u16(header, pos);
     const auto type = static_cast<MessageType>(header[pos++]);
-    ++pos; // reserved
+    ++pos;
     const std::uint64_t payload_size = read_u64(header, pos);
 
     if (magic != kMagic) throw std::runtime_error("invalid protocol magic");
