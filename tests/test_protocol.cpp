@@ -1,8 +1,12 @@
 #include "protocol/Protocol.hpp"
 
 #include <cassert>
+#include <cstdint>
+#include <exception>
 #include <string>
 #include <vector>
+
+void run_file_io_tests();
 
 namespace {
 
