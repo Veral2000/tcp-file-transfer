@@ -1,0 +1,29 @@
+# Build directories
+build/
+out/
+cmake-build-*/
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user
+*.userprefs
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test/generated files
+*.bin
+*.tmp
+coverage/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+install_manifest.txt
+compile_commands.json
