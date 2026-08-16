@@ -15,6 +15,51 @@ std::uint16_t parse_port(const char* value) {
     return static_cast<std::uint16_t>(parsed);
 }
 
+void handle_client(tcpft::network::TcpSocket& client,
+                   const std::filesystem::path& output_dir) {
+    const auto hello = tcpft::protocol::receive_header(client);
+    if (hello.type != tcpft::protocol::MessageType::Hello || hello.payload_size != 0U) {
+        throw std::runtime_error("expected HELLO message");
+    }
+
+    const auto info_header = tcpft::protocol::receive_header(client);
+    if (info_header.type != tcpft::protocol::MessageType::FileInfo) {
+        throw std::runtime_error("expected FILE_INFO message");
+    }
+
+    const auto info = tcpft::protocol::parse_file_info(
+        tcpft::protocol::receive_payload(client, info_header));
+
+    std::cout << "Receiving '" << info.filename << "' (" << info.size << " bytes)\n";
+    tcpft::transfer::FileWriter writer(output_dir, info);
+    tcpft::ChunkIndex expected_chunk = 0;
+
+    while (true) {
+        const auto header = tcpft::protocol::receive_header(client);
+        const auto payload = tcpft::protocol::receive_payload(client, header);
+
+        if (header.type == tcpft::protocol::MessageType::Chunk) {
+            const auto chunk = tcpft::protocol::parse_chunk(payload);
+            if (chunk.index != expected_chunk) {
+                throw std::runtime_error("unexpected chunk index");
+            }
+            writer.write_chunk(chunk.offset, chunk.data);
+            ++expected_chunk;
+            std::cout << "\rReceived " << writer.path().filename().string()
+                      << ": " << writer.path().string() << std::flush;
+        } else if (header.type == tcpft::protocol::MessageType::TransferComplete) {
+            if (!payload.empty()) throw std::runtime_error("invalid completion payload");
+            writer.finalize();
+            std::cout << "\nTransfer complete: " << writer.path() << "\n";
+            return;
+        } else if (header.type == tcpft::protocol::MessageType::Error) {
+            throw std::runtime_error("client error: " + tcpft::protocol::parse_error(payload));
+        } else {
+            throw std::runtime_error("unexpected message during transfer");
+        }
+    }
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -32,53 +77,20 @@ int main(int argc, char* argv[]) {
         listener.bind_and_listen(port);
         std::cout << "Listening on TCP port " << port << "...\n";
 
-        auto client = listener.accept();
-        std::cout << "Client connected.\n";
-
-        const auto hello = tcpft::protocol::receive_header(client);
-        if (hello.type != tcpft::protocol::MessageType::Hello || hello.payload_size != 0U) {
-            throw std::runtime_error("expected HELLO message");
-        }
-
-        const auto info_header = tcpft::protocol::receive_header(client);
-        if (info_header.type != tcpft::protocol::MessageType::FileInfo) {
-            throw std::runtime_error("expected FILE_INFO message");
-        }
-        const auto info = tcpft::protocol::parse_file_info(
-            tcpft::protocol::receive_payload(client, info_header));
-
-        std::cout << "Receiving '" << info.filename << "' (" << info.size << " bytes)\n";
-        tcpft::transfer::FileWriter writer(output_dir, info);
-        tcpft::ChunkIndex expected_chunk = 0;
-
+        // Keep the listener alive for multiple clients. A short-lived connection
+        // from a Docker health check may connect and close without sending a
+        // protocol message; that must not terminate the server.
         while (true) {
-            const auto header = tcpft::protocol::receive_header(client);
-            const auto payload = tcpft::protocol::receive_payload(client, header);
-
-            if (header.type == tcpft::protocol::MessageType::Chunk) {
-                const auto chunk = tcpft::protocol::parse_chunk(payload);
-                if (chunk.index != expected_chunk) {
-                    throw std::runtime_error("unexpected chunk index");
-                }
-                writer.write_chunk(chunk.offset, chunk.data);
-                ++expected_chunk;
-                std::cout << "\rReceived " << writer.path().filename().string()
-                          << ": " << writer.path().string() << std::flush;
-            } else if (header.type == tcpft::protocol::MessageType::TransferComplete) {
-                if (!payload.empty()) throw std::runtime_error("invalid completion payload");
-                writer.finalize();
-                std::cout << "\nTransfer complete: " << writer.path() << "\n";
-                break;
-            } else if (header.type == tcpft::protocol::MessageType::Error) {
-                throw std::runtime_error("client error: " + tcpft::protocol::parse_error(payload));
-            } else {
-                throw std::runtime_error("unexpected message during transfer");
+            try {
+                auto client = listener.accept();
+                std::cout << "Client connected.\n";
+                handle_client(client, output_dir);
+            } catch (const std::exception& ex) {
+                std::cerr << "Client session error: " << ex.what() << '\n';
             }
         }
     } catch (const std::exception& ex) {
         std::cerr << "Server error: " << ex.what() << '\n';
         return 1;
     }
-
-    return 0;
 }
