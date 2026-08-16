@@ -1,0 +1,35 @@
+# syntax=docker/dockerfile:1
+
+FROM ubuntu:24.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        cmake \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY . .
+
+RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --parallel
+
+FROM ubuntu:24.04 AS runtime
+
+RUN useradd --create-home --uid 10001 tcpft \
+    && mkdir -p /data \
+    && chown -R tcpft:tcpft /data
+
+COPY --from=builder /src/build/ft-server /usr/local/bin/ft-server
+COPY --from=builder /src/build/ft-client /usr/local/bin/ft-client
+
+USER tcpft
+WORKDIR /data
+
+EXPOSE 9000/tcp
+
+ENTRYPOINT ["ft-server"]
+CMD ["9000", "/data"]
