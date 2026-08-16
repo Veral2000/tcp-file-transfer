@@ -18,6 +18,7 @@ Implemented:
 - Destination filename/path traversal protection
 - Basic protocol and file I/O tests
 - CMake + CTest build
+- Native installation of `ft-client` and `ft-server`
 
 Planned next:
 
@@ -51,6 +52,47 @@ cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
+## Install
+
+The native client and server can be installed system-wide using CMake. The default installation prefix is `/usr/local`, so the executables are installed into `/usr/local/bin` on Linux/WSL.
+
+### Linux / WSL
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+sudo cmake --install build
+```
+
+Verify the installation:
+
+```bash
+which ft-client
+which ft-server
+```
+
+Expected:
+
+```text
+/usr/local/bin/ft-client
+/usr/local/bin/ft-server
+```
+
+The utilities can then be executed from any working directory:
+
+```bash
+ft-server 9000 ./received
+ft-client send ./test.bin 127.0.0.1:9000
+```
+
+To install under `/usr/bin` instead, explicitly select `/usr` as the CMake installation prefix:
+
+```bash
+sudo cmake --install build --prefix /usr
+```
+
+> `/usr/local/bin` is recommended for this project because it keeps locally built software separate from files managed by the operating-system package manager.
+
 ## Run
 
 The application has two runtime roles: a long-running TCP server and a one-shot client.
@@ -62,6 +104,13 @@ Linux / WSL:
 ```bash
 mkdir -p received
 ./build/ft-server 9000 ./received
+```
+
+After installation, the server can also be started from anywhere:
+
+```bash
+mkdir -p received
+ft-server 9000 ./received
 ```
 
 Windows:
@@ -79,6 +128,12 @@ Linux / WSL:
 
 ```bash
 ./build/ft-client send ./test.bin 127.0.0.1:9000
+```
+
+After installation:
+
+```bash
+ft-client send ./test.bin 127.0.0.1:9000
 ```
 
 Windows:
