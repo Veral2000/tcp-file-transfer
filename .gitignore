@@ -18,6 +18,7 @@ Thumbs.db
 *.bin
 *.tmp
 coverage/
+received/
 
 # CMake
 CMakeCache.txt
@@ -27,3 +28,6 @@ CTestTestfile.cmake
 Makefile
 install_manifest.txt
 compile_commands.json
+
+# Docker
+.docker/
