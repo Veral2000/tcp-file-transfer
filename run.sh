@@ -31,9 +31,9 @@ Modes:
   server         Run the native TCP server. Long-running service.
   client         Run the native client. One-shot transfer operation.
   docker-build   Build the production Docker image.
-  docker-server  Deploy the server as a detached Docker Compose service.
+  docker-server  Run a Dockerized server with ./received bind-mounted for development.
   docker-client  Run the client as a one-shot Docker container.
-  compose-up     Start the production server deployment.
+  compose-up     Start the production server deployment using a managed Docker volume.
   compose-down   Stop the production server deployment.
   compose-logs   Follow production server logs.
 
@@ -102,9 +102,13 @@ docker_build() {
 
 docker_server() {
     require_command docker
-    echo "Starting Dockerized TCP server on port ${PORT}"
-    TCPFT_PORT="${PORT}" docker compose -f "${ROOT_DIR}/docker-compose.yml" up --build -d
-    docker compose -f "${ROOT_DIR}/docker-compose.yml" ps
+    mkdir -p "${DATA_DIR}"
+    echo "Starting development Dockerized TCP server on port ${PORT}"
+    echo "Host output directory: ${DATA_DIR}"
+    echo "Container output directory: /data"
+    export UID="$(id -u)"
+    export GID="$(id -g)"
+    TCPFT_PORT="${PORT}" docker compose -f "${ROOT_DIR}/compose.dev.yml" up --build
 }
 
 docker_client() {
