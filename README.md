@@ -22,6 +22,7 @@ Implemented:
 - Non-root container runtime
 - Production and development Docker Compose configurations
 - Container healthcheck
+- Unified `run.sh` deployment helper
 
 Planned next:
 
@@ -53,9 +54,102 @@ cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-### Docker
+## Unified deployment helper
 
-Build the image:
+`run.sh` provides one entry point for native and containerized deployment. It treats the **server as a long-running service** and the **client as a one-shot transfer command**.
+
+Make it executable once:
+
+```bash
+chmod +x run.sh
+```
+
+Show available commands:
+
+```bash
+./run.sh help
+```
+
+### Native server
+
+```bash
+./run.sh build
+./run.sh server 9000 ./received
+```
+
+The server stays running and waits for transfer clients.
+
+### Native client
+
+The client is intentionally not a daemon. It starts, transfers one file, and exits:
+
+```bash
+./run.sh client ./test.bin 127.0.0.1:9000
+```
+
+For a remote server:
+
+```bash
+./run.sh client ./test.bin 192.168.1.50:9000
+```
+
+### Docker server
+
+Build and deploy the production-style server:
+
+```bash
+./run.sh docker-build
+./run.sh docker-server
+```
+
+The server runs as a detached Compose service with persistent Docker-managed storage.
+
+Check it with:
+
+```bash
+docker compose ps
+docker compose logs -f server
+```
+
+### Docker client
+
+The client is launched as a one-shot container. The input file is mounted read-only into the client container:
+
+```bash
+./run.sh docker-client ./test.bin 127.0.0.1:9000
+```
+
+When the server is running on the Docker host and the client is also containerized, use a host-reachable endpoint such as `host.docker.internal:9000` where supported:
+
+```bash
+./run.sh docker-client ./test.bin host.docker.internal:9000
+```
+
+When both client and server are containers, they should eventually be placed on the same Docker network and addressed by the server service name, for example `server:9000`. This keeps service discovery independent of host IP addresses.
+
+### Compose lifecycle
+
+Production server deployment:
+
+```bash
+./run.sh compose-up
+```
+
+Stop the server:
+
+```bash
+./run.sh compose-down
+```
+
+Follow logs:
+
+```bash
+./run.sh compose-logs
+```
+
+## Docker
+
+Build the image directly:
 
 ```bash
 docker build -t tcp-file-transfer:latest .
@@ -63,44 +157,60 @@ docker build -t tcp-file-transfer:latest .
 
 The image uses a multi-stage build. The final runtime image contains only the transfer binaries and runtime dependencies and runs as the non-root `tcpft` user.
 
-## Docker Compose
+### Docker Compose storage models
 
-### Production-style deployment
+The production `docker-compose.yml` uses a **managed Docker volume**:
 
-The default Compose file uses a **managed Docker volume**. This avoids host bind-mount UID/GID problems and keeps received data persistent across container recreation.
-
-```bash
-docker compose up --build -d
+```text
+Docker host
+    |
+    v
++---------------------------+
+| ft-server container       |
+|                           |
+| /data                     |
++-------------+-------------+
+              |
+              v
+        tcpft-data volume
 ```
 
-Check status and health:
+This avoids host bind-mount UID/GID problems and keeps received data persistent across container recreation.
 
-```bash
-docker compose ps
-docker compose logs -f
+The development `compose.dev.yml` uses:
+
+```text
+./received:/data
 ```
 
-The service is exposed on TCP port 9000 by default. Override it with:
+and maps the current host UID/GID into the container, so received files are directly visible in the repository without requiring `chmod 777`.
 
-```bash
-TCPFT_PORT=9100 docker compose up --build -d
+## Server/client deployment model
+
+The application has two different runtime roles:
+
+```text
+                 TCP
+      +--------------------------+
+      |                          |
+      v                          v
++-------------+            +-------------+
+|   SERVER    |            |   CLIENT    |
+| long-running|            | one-shot     |
+| service     |            | transfer     |
++-------------+            +-------------+
 ```
 
-Stop the service:
+The server should be deployed as a persistent process/container because it listens for incoming transfers. The client should normally be started per transfer because it has no reason to remain alive after completing a file operation.
 
-```bash
-docker compose down
-```
+This separation also makes the utility suitable for both deployment models:
 
-The named volume is intentionally retained by `docker compose down`. To remove the stored transfer data as well:
+- **Server:** Docker Compose/service deployment.
+- **Client:** CLI invocation or short-lived container.
 
-```bash
-docker compose down -v
-```
+For a future multi-container deployment, both roles can share a dedicated Docker network and the client can connect to the Compose service name instead of a hard-coded IP address.
 
-### Development deployment
-
-Development mode uses a bind mount so received files are immediately visible in the repository's `received/` directory. It also maps the current host UID/GID into the container, avoiding the `chmod 777` workaround.
+## Development Docker deployment
 
 ```bash
 mkdir -p received
@@ -109,7 +219,13 @@ export GID=$(id -g)
 docker compose -f compose.dev.yml up --build
 ```
 
-Received files will appear under:
+Then from another terminal:
+
+```bash
+./run.sh client ./test.bin 127.0.0.1:9000
+```
+
+Received files appear under:
 
 ```text
 ./received/
@@ -122,20 +238,6 @@ docker compose -f compose.dev.yml down
 ```
 
 > Do not use `chmod 777` as the normal deployment solution. The development Compose configuration maps the host UID/GID, while the production configuration uses a Docker-managed volume owned by the container runtime user.
-
-### Dockerized client
-
-The same image contains both `ft-server` and `ft-client`. The default entrypoint starts the server, so override the entrypoint when using it as a client:
-
-```bash
-docker run --rm \
-  --entrypoint /usr/local/bin/ft-client \
-  -v "$(pwd):/work:ro" \
-  tcp-file-transfer:latest \
-  send /work/test.bin host.docker.internal:9000
-```
-
-On Linux, replace `host.docker.internal` with the reachable server address or add Docker's host-gateway mapping when the server is running on the host.
 
 ## Run natively
 
@@ -192,6 +294,7 @@ TCP provides reliable, ordered byte-stream delivery. The application protocol is
 6. Measure performance before introducing application-level pipelining.
 7. Keep the container runtime minimal and run the service as a non-root user.
 8. Use host UID/GID mapping for development bind mounts and Docker-managed volumes for production persistence.
+9. Treat the server as a persistent service and the client as a one-shot transfer operation.
 
 ## Security roadmap
 
