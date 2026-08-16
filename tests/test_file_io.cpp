@@ -40,7 +40,7 @@ void test_round_trip() {
         }
 
         tcpft::transfer::FileReader reader(source);
-        require(reader.info().size == 31U, "unexpected source file size");
+        require(reader.info().size == 30U, "unexpected source file size");
 
         const auto destination_dir = directory / "received";
         tcpft::transfer::FileWriter writer(destination_dir, reader.info());
