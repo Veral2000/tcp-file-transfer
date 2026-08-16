@@ -1,0 +1,18 @@
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tcp-file-transfer:dev
+    container_name: tcp-file-transfer-server-dev
+    ports:
+      - "${TCPFT_PORT:-9000}:9000"
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - ./received:/data
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 9000"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
