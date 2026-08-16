@@ -1,0 +1,12 @@
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tcp-file-transfer:latest
+    container_name: tcp-file-transfer-server
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    volumes:
+      - ./received:/data
