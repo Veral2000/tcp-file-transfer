@@ -47,6 +47,18 @@ require_command() {
     }
 }
 
+native_client() {
+    [[ $# -eq 2 ]] || { echo "Usage: ./deploy/docker/run.sh client <file> <host:port>" >&2; exit 2; }
+    local file="$1"
+    local endpoint="$2"
+    [[ -f "${file}" ]] || { echo "Error: file not found: ${file}" >&2; exit 1; }
+    [[ -x "${ROOT_DIR}/build/ft-client" ]] || {
+        echo "Error: native client not found at ${ROOT_DIR}/build/ft-client. Build the project first." >&2
+        exit 1
+    }
+    "${ROOT_DIR}/build/ft-client" send "${file}" "${endpoint}"
+}
+
 docker_build() {
     require_command docker
     docker build -f "${ROOT_DIR}/deploy/docker/Dockerfile" -t "${IMAGE}" "${ROOT_DIR}"
@@ -97,7 +109,8 @@ main() {
     case "${command}" in
         build|docker-build) docker_build "$@" ;;
         server|docker-server) docker_server "$@" ;;
-        client|docker-client) docker_client "$@" ;;
+        client) native_client "$@" ;;
+        docker-client) docker_client "$@" ;;
         compose-up) compose_up "$@" ;;
         compose-down) compose_down "$@" ;;
         compose-logs) compose_logs "$@" ;;
