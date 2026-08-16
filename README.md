@@ -18,7 +18,10 @@ Implemented:
 - Destination filename/path traversal protection
 - Basic protocol and file I/O tests
 - CMake + CTest build
-- Container image and Docker Compose deployment
+- Multi-stage Docker image
+- Non-root container runtime
+- Production and development Docker Compose configurations
+- Container healthcheck
 
 Planned next:
 
@@ -58,31 +61,67 @@ Build the image:
 docker build -t tcp-file-transfer:latest .
 ```
 
-Run the server:
+The image uses a multi-stage build. The final runtime image contains only the transfer binaries and runtime dependencies and runs as the non-root `tcpft` user.
+
+## Docker Compose
+
+### Production-style deployment
+
+The default Compose file uses a **managed Docker volume**. This avoids host bind-mount UID/GID problems and keeps received data persistent across container recreation.
 
 ```bash
-mkdir -p received
-docker run --rm \
-  --name tcp-file-transfer-server \
-  -p 9000:9000 \
-  -v "$(pwd)/received:/data" \
-  tcp-file-transfer:latest
+docker compose up --build -d
 ```
 
-The container runs as a non-root `tcpft` user and writes received files to `/data`.
+Check status and health:
 
-For a Compose deployment:
+```bash
+docker compose ps
+docker compose logs -f
+```
+
+The service is exposed on TCP port 9000 by default. Override it with:
+
+```bash
+TCPFT_PORT=9100 docker compose up --build -d
+```
+
+Stop the service:
+
+```bash
+docker compose down
+```
+
+The named volume is intentionally retained by `docker compose down`. To remove the stored transfer data as well:
+
+```bash
+docker compose down -v
+```
+
+### Development deployment
+
+Development mode uses a bind mount so received files are immediately visible in the repository's `received/` directory. It also maps the current host UID/GID into the container, avoiding the `chmod 777` workaround.
 
 ```bash
 mkdir -p received
-docker compose up --build
+export UID=$(id -u)
+export GID=$(id -g)
+docker compose -f compose.dev.yml up --build
+```
+
+Received files will appear under:
+
+```text
+./received/
 ```
 
 Stop it with:
 
 ```bash
-docker compose down
+docker compose -f compose.dev.yml down
 ```
+
+> Do not use `chmod 777` as the normal deployment solution. The development Compose configuration maps the host UID/GID, while the production configuration uses a Docker-managed volume owned by the container runtime user.
 
 ### Dockerized client
 
@@ -98,7 +137,7 @@ docker run --rm \
 
 On Linux, replace `host.docker.internal` with the reachable server address or add Docker's host-gateway mapping when the server is running on the host.
 
-## Run
+## Run natively
 
 Start the receiver:
 
@@ -152,6 +191,7 @@ TCP provides reliable, ordered byte-stream delivery. The application protocol is
 5. Keep the protocol explicit and versioned so it can evolve.
 6. Measure performance before introducing application-level pipelining.
 7. Keep the container runtime minimal and run the service as a non-root user.
+8. Use host UID/GID mapping for development bind mounts and Docker-managed volumes for production persistence.
 
 ## Security roadmap
 
