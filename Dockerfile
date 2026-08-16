@@ -21,7 +21,10 @@ RUN rm -rf build \
 
 FROM ubuntu:24.04 AS runtime
 
-RUN useradd --create-home --uid 10001 tcpft \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 tcpft \
     && mkdir -p /data \
     && chown -R tcpft:tcpft /data
 
@@ -32,6 +35,9 @@ USER tcpft
 WORKDIR /data
 
 EXPOSE 9000/tcp
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+    CMD nc -z 127.0.0.1 9000 || exit 1
 
 ENTRYPOINT ["ft-server"]
 CMD ["9000", "/data"]
