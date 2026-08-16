@@ -19,7 +19,6 @@ add_library(transfer_core
 )
 
 target_include_directories(transfer_core PUBLIC include)
-
 target_compile_definitions(transfer_core PRIVATE $<$<CONFIG:Debug>:TCPFT_DEBUG>)
 
 if(WIN32)
@@ -31,6 +30,13 @@ target_link_libraries(ft-server PRIVATE transfer_core)
 
 add_executable(ft-client src/client/main.cpp)
 target_link_libraries(ft-client PRIVATE transfer_core)
+
+include(GNUInstallDirs)
+
+install(
+    TARGETS ft-server ft-client
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
 
 enable_testing()
 add_subdirectory(tests)
