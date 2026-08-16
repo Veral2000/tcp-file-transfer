@@ -23,9 +23,5 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
 
-      # Windows test execution is temporarily disabled while the test suite
-      # is being made runtime-safe for MSVC. Windows compilation remains
-      # covered by CI so portability regressions are still detected.
       - name: Test
-        if: matrix.os == 'ubuntu-latest'
         run: ctest --test-dir build -C Release --output-on-failure
