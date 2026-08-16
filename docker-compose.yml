@@ -7,6 +7,15 @@ services:
     container_name: tcp-file-transfer-server
     restart: unless-stopped
     ports:
-      - "9000:9000"
+      - "${TCPFT_PORT:-9000}:9000"
     volumes:
-      - ./received:/data
+      - tcpft-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 9000"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  tcpft-data:
