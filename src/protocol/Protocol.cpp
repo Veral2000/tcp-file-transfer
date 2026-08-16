@@ -110,7 +110,7 @@ MessageHeader receive_header(network::TcpSocket& socket) {
 std::vector<std::uint8_t> receive_payload(network::TcpSocket& socket,
                                            const MessageHeader& header) {
     if (header.payload_size > kMaxPayloadSize ||
-        header.payload_size > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+        header.payload_size > static_cast<std::uint64_t>((std::numeric_limits<std::size_t>::max)())) {
         throw std::runtime_error("invalid payload size");
     }
     std::vector<std::uint8_t> payload(static_cast<std::size_t>(header.payload_size));
