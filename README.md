@@ -18,6 +18,7 @@ Implemented:
 - Destination filename/path traversal protection
 - Basic protocol and file I/O tests
 - CMake + CTest build
+- Container image and Docker Compose deployment
 
 Planned next:
 
@@ -48,6 +49,54 @@ cmake -S . -B build
 cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
+
+### Docker
+
+Build the image:
+
+```bash
+docker build -t tcp-file-transfer:latest .
+```
+
+Run the server:
+
+```bash
+mkdir -p received
+docker run --rm \
+  --name tcp-file-transfer-server \
+  -p 9000:9000 \
+  -v "$(pwd)/received:/data" \
+  tcp-file-transfer:latest
+```
+
+The container runs as a non-root `tcpft` user and writes received files to `/data`.
+
+For a Compose deployment:
+
+```bash
+mkdir -p received
+docker compose up --build
+```
+
+Stop it with:
+
+```bash
+docker compose down
+```
+
+### Dockerized client
+
+The same image contains both `ft-server` and `ft-client`. The default entrypoint starts the server, so override the entrypoint when using it as a client:
+
+```bash
+docker run --rm \
+  --entrypoint /usr/local/bin/ft-client \
+  -v "$(pwd):/work:ro" \
+  tcp-file-transfer:latest \
+  send /work/test.bin host.docker.internal:9000
+```
+
+On Linux, replace `host.docker.internal` with the reachable server address or add Docker's host-gateway mapping when the server is running on the host.
 
 ## Run
 
@@ -102,6 +151,7 @@ TCP provides reliable, ordered byte-stream delivery. The application protocol is
 4. Validate protocol input before allocating or writing data.
 5. Keep the protocol explicit and versioned so it can evolve.
 6. Measure performance before introducing application-level pipelining.
+7. Keep the container runtime minimal and run the service as a non-root user.
 
 ## Security roadmap
 
