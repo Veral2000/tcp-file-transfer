@@ -122,7 +122,12 @@ void TcpSocket::connect(const char* host, std::uint16_t port) {
 
     bool connected = false;
     for (addrinfo* current = result; current != nullptr; current = current->ai_next) {
-        if (::connect(to_native(handle_), current->ai_addr, current->ai_addrlen) == 0) {
+#ifdef _WIN32
+        const int address_length = static_cast<int>(current->ai_addrlen);
+#else
+        const socklen_t address_length = current->ai_addrlen;
+#endif
+        if (::connect(to_native(handle_), current->ai_addr, address_length) == 0) {
             connected = true;
             break;
         }
