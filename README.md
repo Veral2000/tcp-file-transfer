@@ -18,11 +18,6 @@ Implemented:
 - Destination filename/path traversal protection
 - Basic protocol and file I/O tests
 - CMake + CTest build
-- Multi-stage Docker image
-- Non-root container runtime
-- Production and development Docker Compose configurations
-- Container healthcheck
-- Unified `run.sh` deployment helper
 
 Planned next:
 
@@ -33,6 +28,8 @@ Planned next:
 - Compression policy
 - Performance benchmarking and bandwidth optimization
 - Expanded integration/failure testing
+
+> Container deployment is maintained separately on the `docker` branch so `main` remains focused on the native application.
 
 ## Build
 
@@ -54,140 +51,45 @@ cmake --build build --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-## Unified deployment helper
+## Run
 
-`run.sh` provides one entry point for native and containerized deployment. It treats the **server as a long-running service** and the **client as a one-shot transfer command**.
+The application has two runtime roles: a long-running TCP server and a one-shot client.
 
-Make it executable once:
+### Server
 
-```bash
-chmod +x run.sh
-```
-
-Show available commands:
+Linux / WSL:
 
 ```bash
-./run.sh help
+mkdir -p received
+./build/ft-server 9000 ./received
 ```
 
-### Native server
+Windows:
+
+```powershell
+mkdir received
+.\build\Release\ft-server.exe 9000 .\received
+```
+
+The server listens for incoming TCP connections and writes received files below the configured output directory.
+
+### Client
+
+Linux / WSL:
 
 ```bash
-./run.sh build
-./run.sh server 9000 ./received
+./build/ft-client send ./test.bin 127.0.0.1:9000
 ```
 
-The server stays running and waits for transfer clients.
+Windows:
 
-### Native client
-
-The client is intentionally not a daemon. It starts, transfers one file, and exits:
-
-```bash
-./run.sh client ./test.bin 127.0.0.1:9000
+```powershell
+.\build\Release\ft-client.exe send .\test.bin 127.0.0.1:9000
 ```
 
-For a remote server:
-
-```bash
-./run.sh client ./test.bin 192.168.1.50:9000
-```
-
-### Docker server
-
-Build and deploy the production-style server:
-
-```bash
-./run.sh docker-build
-./run.sh docker-server
-```
-
-The server runs as a detached Compose service with persistent Docker-managed storage.
-
-Check it with:
-
-```bash
-docker compose ps
-docker compose logs -f server
-```
-
-### Docker client
-
-The client is launched as a one-shot container. The input file is mounted read-only into the client container:
-
-```bash
-./run.sh docker-client ./test.bin 127.0.0.1:9000
-```
-
-When the server is running on the Docker host and the client is also containerized, use a host-reachable endpoint such as `host.docker.internal:9000` where supported:
-
-```bash
-./run.sh docker-client ./test.bin host.docker.internal:9000
-```
-
-When both client and server are containers, they should eventually be placed on the same Docker network and addressed by the server service name, for example `server:9000`. This keeps service discovery independent of host IP addresses.
-
-### Compose lifecycle
-
-Production server deployment:
-
-```bash
-./run.sh compose-up
-```
-
-Stop the server:
-
-```bash
-./run.sh compose-down
-```
-
-Follow logs:
-
-```bash
-./run.sh compose-logs
-```
-
-## Docker
-
-Build the image directly:
-
-```bash
-docker build -t tcp-file-transfer:latest .
-```
-
-The image uses a multi-stage build. The final runtime image contains only the transfer binaries and runtime dependencies and runs as the non-root `tcpft` user.
-
-### Docker Compose storage models
-
-The production `docker-compose.yml` uses a **managed Docker volume**:
-
-```text
-Docker host
-    |
-    v
-+---------------------------+
-| ft-server container       |
-|                           |
-| /data                     |
-+-------------+-------------+
-              |
-              v
-        tcpft-data volume
-```
-
-This avoids host bind-mount UID/GID problems and keeps received data persistent across container recreation.
-
-The development `compose.dev.yml` uses:
-
-```text
-./received:/data
-```
-
-and maps the current host UID/GID into the container, so received files are directly visible in the repository without requiring `chmod 777`.
+For a remote server, replace `127.0.0.1` with the server's reachable IP address or hostname.
 
 ## Server/client deployment model
-
-The application has two different runtime roles:
 
 ```text
                  TCP
@@ -201,65 +103,7 @@ The application has two different runtime roles:
 +-------------+            +-------------+
 ```
 
-The server should be deployed as a persistent process/container because it listens for incoming transfers. The client should normally be started per transfer because it has no reason to remain alive after completing a file operation.
-
-This separation also makes the utility suitable for both deployment models:
-
-- **Server:** Docker Compose/service deployment.
-- **Client:** CLI invocation or short-lived container.
-
-For a future multi-container deployment, both roles can share a dedicated Docker network and the client can connect to the Compose service name instead of a hard-coded IP address.
-
-## Development Docker deployment
-
-```bash
-mkdir -p received
-export UID=$(id -u)
-export GID=$(id -g)
-docker compose -f compose.dev.yml up --build
-```
-
-Then from another terminal:
-
-```bash
-./run.sh client ./test.bin 127.0.0.1:9000
-```
-
-Received files appear under:
-
-```text
-./received/
-```
-
-Stop it with:
-
-```bash
-docker compose -f compose.dev.yml down
-```
-
-> Do not use `chmod 777` as the normal deployment solution. The development Compose configuration maps the host UID/GID, while the production configuration uses a Docker-managed volume owned by the container runtime user.
-
-## Run natively
-
-Start the receiver:
-
-```bash
-./build/ft-server 9000 ./received
-```
-
-On Windows with a multi-config generator:
-
-```powershell
-.\build\Release\ft-server.exe 9000 .\received
-```
-
-Send a file from another terminal/machine:
-
-```bash
-./build/ft-client send ./test.bin 127.0.0.1:9000
-```
-
-The receiver stores the file below the configured output directory.
+The server is a persistent process because it listens for incoming transfers. The client normally starts for a transfer, completes it, and exits.
 
 ## Protocol
 
@@ -292,9 +136,7 @@ TCP provides reliable, ordered byte-stream delivery. The application protocol is
 4. Validate protocol input before allocating or writing data.
 5. Keep the protocol explicit and versioned so it can evolve.
 6. Measure performance before introducing application-level pipelining.
-7. Keep the container runtime minimal and run the service as a non-root user.
-8. Use host UID/GID mapping for development bind mounts and Docker-managed volumes for production persistence.
-9. Treat the server as a persistent service and the client as a one-shot transfer operation.
+7. Treat the server as a persistent service and the client as a one-shot transfer operation.
 
 ## Security roadmap
 
