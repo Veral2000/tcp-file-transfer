@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstdint>
 #include <exception>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -31,7 +32,10 @@ void test_file_info_parser_rejects_invalid_payload() {
     } catch (const std::exception&) {
         rejected = true;
     }
-    assert(rejected);
+
+    if (!rejected) {
+        throw std::runtime_error("parse_file_info accepted an invalid payload");
+    }
 }
 
 } // namespace
