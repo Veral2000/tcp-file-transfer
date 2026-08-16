@@ -14,7 +14,9 @@ RUN apt-get update \
 WORKDIR /src
 COPY . .
 
-RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+# Never reuse a host/local CMake cache inside the container.
+RUN rm -rf build \
+    && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
     && cmake --build build --parallel
 
 FROM ubuntu:24.04 AS runtime
