@@ -12,6 +12,7 @@ else()
 endif()
 
 add_library(transfer_core
+    src/crypto/Sha256.cpp
     src/network/TcpSocket.cpp
     src/protocol/Protocol.cpp
     src/transfer/FileReader.cpp

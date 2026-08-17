@@ -1,6 +1,7 @@
 add_executable(tcpft_tests
     test_file_io.cpp
     test_protocol.cpp
+    test_sha256.cpp
 )
 
 target_link_libraries(tcpft_tests PRIVATE transfer_core)

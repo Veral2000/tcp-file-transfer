@@ -22,6 +22,8 @@ Implemented:
 - Python end-to-end negative integration test for SHA-256 mismatch detection
 - CMake + CTest build
 - Native installation of `ft-client` and `ft-server`
+- GitHub Actions CI for Linux and Windows builds/tests
+- Separate Docker deployment branch
 
 Planned next:
 
@@ -32,7 +34,35 @@ Planned next:
 - Performance benchmarking and bandwidth optimization
 - Expanded integration/failure testing
 
-> Container deployment is maintained separately on the `docker` branch so `main` remains focused on the native application.
+> Container deployment is maintained separately on `feature/docker-deployment` so `main` remains focused on the native application.
+
+## Architecture
+
+The implementation is organized into a small set of focused layers:
+
+```text
+                         TCP File Transfer
+                                |
+              +-----------------+-----------------+
+              |                                   |
+          ft-client                           ft-server
+              |                                   |
+        +-----+------+                     +------+-----+
+        | FileReader |                     | FileWriter |
+        +-----+------+                     +------+-----+
+              |                                   |
+        +-----+------+                     +------+-----+
+        |  SHA-256   |<---- FILE_HASH ---->|  SHA-256   |
+        +-----+------+                     +------+-----+
+              |                                   |
+              +---------- Protocol ---------------+
+                              |
+                         TcpSocket
+                              |
+                         TCP / OS API
+```
+
+The detailed architecture, component responsibilities, protocol flow, design trade-offs, security considerations, and evolution plan are documented in [`docs/architecture.md`](docs/architecture.md).
 
 ## Build
 
@@ -93,7 +123,7 @@ To install under `/usr/bin` instead, explicitly select `/usr` as the CMake insta
 sudo cmake --install build --prefix /usr
 ```
 
-> `/usr/local/bin` is recommended for this project because it keeps locally built software separate from files managed by the operating-system package manager.
+> `/usr/local/bin` is recommended because it keeps locally built software separate from files managed by the operating-system package manager.
 
 ## Run
 
@@ -146,21 +176,30 @@ Windows:
 
 For a remote server, replace `127.0.0.1` with the server's reachable IP address or hostname.
 
-## Server/client deployment model
+## Transfer and integrity flow
+
+The client calculates the SHA-256 digest of the source file before transmission and sends it to the server in a `FILE_HASH` protocol message. The file itself is then streamed as bounded-size `CHUNK` messages.
 
 ```text
-                 TCP
-      +--------------------------+
-      |                          |
-      v                          v
-+-------------+            +-------------+
-|   SERVER    |            |   CLIENT    |
-| long-running|            | one-shot     |
-| service     |            | transfer     |
-+-------------+            +-------------+
+Client                                      Server
+  |                                           |
+  |------------- HELLO --------------------->|
+  |------------- FILE_INFO ----------------->|
+  |------------- FILE_HASH ----------------->|
+  |------------- CHUNK --------------------->|
+  |------------- CHUNK --------------------->|
+  |                  ...                      |
+  |-------- TRANSFER_COMPLETE -------------->|
+  |                                           |
+  |                         hash received file|
+  |                         compare SHA-256   |
+  |                                           |
+  |              PASS / integrity failure    |
 ```
 
-The server is a persistent process because it listens for incoming transfers. The client normally starts for a transfer, completes it, and exits.
+The server verifies both the announced file size and the final SHA-256 digest. A mismatch is treated as a failed client session and does not terminate the persistent server process.
+
+The current implementation finalizes the destination file before performing the final hash comparison. Therefore, a failed integrity check can leave the received file on disk. Atomic temporary-file handling (`.part` + rename after successful verification) is a planned hardening step.
 
 ## Protocol
 
@@ -267,10 +306,25 @@ The integration test is intentionally a negative-path test and is separate from 
 7. Treat the server as a persistent service and the client as a one-shot transfer operation.
 8. Verify received content independently from TCP transport reliability.
 
-## Security roadmap
+## Docker
 
 The current foundation validates protocol boundaries, destination filenames, and file integrity but does not yet provide confidentiality or peer authentication. TLS 1.3 and certificate validation are planned for the secure-transfer milestone.
 
 ## Assignment mapping
 
-The ATI assignment asks for TCP transfer, files up to 16 GB, integrity checks, error handling, cross-platform compatibility, and optionally improved bandwidth utilization. It also requests source code, build/run documentation, unit tests, and a project-description document with architecture, design considerations, C4 diagrams, and performance metrics.
+The implementation addresses the core assignment requirements:
+
+| Requirement | Implementation |
+|---|---|
+| TCP file transfer | `ft-client` / `ft-server` over TCP |
+| Large files | 64-bit sizes/offsets, 16 GiB application limit |
+| Integrity | End-to-end SHA-256 verification |
+| Error handling | Protocol/session validation and isolated client failures |
+| Cross-platform | POSIX sockets and Windows Winsock behind `TcpSocket` |
+| Efficient memory use | Bounded 4 MiB streaming chunks |
+| Testing | CMake/CTest unit tests + Python integration test |
+| Build | CMake |
+| Documentation | README + architecture/design document |
+| Containerization | Separate Docker deployment branch |
+
+Optional bandwidth optimization such as pipelining/windowing, performance benchmarking, retry/resume, and TLS are intentionally treated as subsequent milestones rather than mixed into the initial transfer foundation.
