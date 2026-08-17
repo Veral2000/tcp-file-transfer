@@ -1,4 +1,5 @@
 #include "common/Types.hpp"
+#include "crypto/Sha256.hpp"
 #include "network/TcpSocket.hpp"
 #include "protocol/Protocol.hpp"
 #include "transfer/FileReader.hpp"
@@ -39,15 +40,18 @@ int main(int argc, char* argv[]) {
         tcpft::network::NetworkRuntime runtime;
         tcpft::transfer::FileReader reader(argv[2]);
         const auto [host, port] = parse_endpoint(argv[3]);
+        const auto file_hash = tcpft::crypto::hash_file(argv[2]);
 
         auto socket = tcpft::network::TcpSocket::create();
         socket.connect(host.c_str(), port);
 
         tcpft::protocol::send_hello(socket);
         tcpft::protocol::send_file_info(socket, reader.info());
+        tcpft::protocol::send_file_hash(socket, file_hash);
 
         std::cout << "Sending '" << reader.info().filename << "' ("
                   << reader.info().size << " bytes)\n";
+        std::cout << "SHA-256: " << tcpft::crypto::to_hex(file_hash) << '\n';
 
         while (reader.has_more()) {
             auto data = reader.read_chunk(tcpft::kDefaultChunkSize);
