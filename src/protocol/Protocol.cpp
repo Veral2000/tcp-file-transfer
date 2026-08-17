@@ -22,7 +22,9 @@ void append_u64(std::vector<std::uint8_t>& out, std::uint64_t value) {
 }
 std::uint16_t read_u16(const std::vector<std::uint8_t>& data, std::size_t& pos) {
     if (pos > data.size() || data.size() - pos < 2U) throw std::runtime_error("truncated uint16");
-    const auto value = static_cast<std::uint16_t>(data[pos]) << 8U | static_cast<std::uint16_t>(data[pos + 1U]);
+    const auto value = static_cast<std::uint16_t>(
+        (static_cast<std::uint16_t>(data[pos]) << 8U) |
+        static_cast<std::uint16_t>(data[pos + 1U]));
     pos += 2U;
     return value;
 }
