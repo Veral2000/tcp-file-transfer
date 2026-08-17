@@ -4,7 +4,7 @@ Cross-platform TCP file transfer utility implemented in C++17 for the ATI Platfo
 
 ## Current status
 
-**v0.1.0 — streaming TCP transfer foundation**
+**v0.1.0 — streaming TCP transfer with end-to-end SHA-256 verification**
 
 Implemented:
 
@@ -16,13 +16,16 @@ Implemented:
 - Files up to 16 GiB
 - 4 MiB default transfer chunks
 - Destination filename/path traversal protection
-- Basic protocol and file I/O tests
-- CMake + CTest build
+- SHA-256 file integrity verification
+- Protocol validation and error handling
+- C++ unit tests with CMake + CTest
+- Python end-to-end integrity mismatch integration test
 - Native installation of `ft-client` and `ft-server`
+- GitHub Actions CI for Linux and Windows builds/tests
+- Separate Docker deployment branch
 
 Planned next:
 
-- SHA-256 integrity verification
 - Per-chunk integrity and acknowledgements
 - Retry and resumable transfers
 - TLS 1.3 transport security
@@ -30,7 +33,35 @@ Planned next:
 - Performance benchmarking and bandwidth optimization
 - Expanded integration/failure testing
 
-> Container deployment is maintained separately on the `docker` branch so `main` remains focused on the native application.
+> Container deployment is maintained separately on `feature/docker-deployment` so `main` remains focused on the native application.
+
+## Architecture
+
+The implementation is organized into a small set of focused layers:
+
+```text
+                         TCP File Transfer
+                                |
+              +-----------------+-----------------+
+              |                                   |
+          ft-client                           ft-server
+              |                                   |
+        +-----+------+                     +------+-----+
+        | FileReader |                     | FileWriter |
+        +-----+------+                     +------+-----+
+              |                                   |
+        +-----+------+                     +------+-----+
+        |  SHA-256   |<---- FILE_HASH ---->|  SHA-256   |
+        +-----+------+                     +------+-----+
+              |                                   |
+              +---------- Protocol ---------------+
+                              |
+                         TcpSocket
+                              |
+                         TCP / OS API
+```
+
+The detailed architecture, component responsibilities, protocol flow, design trade-offs, security considerations, and evolution plan are documented in [`docs/architecture.md`](docs/architecture.md).
 
 ## Build
 
@@ -91,7 +122,7 @@ To install under `/usr/bin` instead, explicitly select `/usr` as the CMake insta
 sudo cmake --install build --prefix /usr
 ```
 
-> `/usr/local/bin` is recommended for this project because it keeps locally built software separate from files managed by the operating-system package manager.
+> `/usr/local/bin` is recommended because it keeps locally built software separate from files managed by the operating-system package manager.
 
 ## Run
 
@@ -144,21 +175,30 @@ Windows:
 
 For a remote server, replace `127.0.0.1` with the server's reachable IP address or hostname.
 
-## Server/client deployment model
+## Transfer and integrity flow
+
+The client calculates the SHA-256 digest of the source file before transmission and sends it to the server in a `FILE_HASH` protocol message. The file itself is then streamed as bounded-size `CHUNK` messages.
 
 ```text
-                 TCP
-      +--------------------------+
-      |                          |
-      v                          v
-+-------------+            +-------------+
-|   SERVER    |            |   CLIENT    |
-| long-running|            | one-shot     |
-| service     |            | transfer     |
-+-------------+            +-------------+
+Client                                      Server
+  |                                           |
+  |------------- HELLO --------------------->|
+  |------------- FILE_INFO ----------------->|
+  |------------- FILE_HASH ----------------->|
+  |------------- CHUNK --------------------->|
+  |------------- CHUNK --------------------->|
+  |                  ...                      |
+  |-------- TRANSFER_COMPLETE -------------->|
+  |                                           |
+  |                         hash received file|
+  |                         compare SHA-256   |
+  |                                           |
+  |              PASS / integrity failure    |
 ```
 
-The server is a persistent process because it listens for incoming transfers. The client normally starts for a transfer, completes it, and exits.
+The server verifies both the announced file size and the final SHA-256 digest. A mismatch is treated as a failed client session and does not terminate the persistent server process.
+
+The current implementation finalizes the destination file before performing the final hash comparison. Therefore, a failed integrity check can leave the received file on disk. Atomic temporary-file handling (`.part` + rename after successful verification) is a planned hardening step.
 
 ## Protocol
 
@@ -175,13 +215,53 @@ All multi-byte fields are encoded in network byte order (big-endian).
 
 Messages currently supported:
 
-- `HELLO`
-- `FILE_INFO`
-- `CHUNK`
-- `TRANSFER_COMPLETE`
-- `ERROR`
+| Type | Purpose |
+|---|---|
+| `HELLO` | Starts a transfer session |
+| `FILE_INFO` | Announces filename and expected file size |
+| `FILE_HASH` | Announces expected SHA-256 digest |
+| `CHUNK` | Carries a bounded section of file data |
+| `TRANSFER_COMPLETE` | Indicates that all chunks have been sent |
+| `ERROR` | Reports a protocol or transfer error |
 
-TCP provides reliable, ordered byte-stream delivery. The application protocol is responsible for transfer semantics, framing, validation, integrity, and later resume/retry behavior.
+TCP provides reliable, ordered byte-stream delivery. The application protocol is responsible for transfer semantics, framing, validation, integrity, and future resume/retry behavior.
+
+## Resource limits
+
+Current protocol/application limits are defined centrally in `include/common/Types.hpp`:
+
+- Default chunk size: **4 MiB**
+- Maximum chunk size: **16 MiB**
+- Maximum file size: **16 GiB**
+- Maximum protocol filename length: **4096 bytes**
+
+Files are streamed rather than loaded completely into memory.
+
+## Testing
+
+### C++ unit tests
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+ctest --test-dir build --output-on-failure
+```
+
+The CTest target covers file I/O, protocol behavior, and SHA-256 known vectors/file hashing.
+
+### Integrity mismatch integration test
+
+The repository also contains a Python end-to-end negative test that sends the SHA-256 digest of one payload while transmitting a different payload. The server must detect the mismatch and remain available for subsequent client sessions.
+
+```bash
+python3 tests/integration/test_integrity_mismatch.py ./build/ft-server
+```
+
+Expected result:
+
+```text
+Integrity mismatch integration test passed.
+```
 
 ## Design principles
 
@@ -190,13 +270,53 @@ TCP provides reliable, ordered byte-stream delivery. The application protocol is
 3. Keep platform-specific socket details behind one abstraction.
 4. Validate protocol input before allocating or writing data.
 5. Keep the protocol explicit and versioned so it can evolve.
-6. Measure performance before introducing application-level pipelining.
-7. Treat the server as a persistent service and the client as a one-shot transfer operation.
+6. Use end-to-end SHA-256 verification rather than relying only on TCP delivery guarantees.
+7. Keep the server persistent and isolate individual client-session failures.
+8. Measure performance before introducing application-level pipelining.
 
-## Security roadmap
+## Security considerations
 
-The current foundation validates protocol boundaries and destination filenames but does not yet provide confidentiality or peer authentication. TLS 1.3 and certificate validation are planned for the secure-transfer milestone.
+The current implementation provides protocol validation, filename/path traversal protection, file-size limits, and end-to-end SHA-256 integrity verification. It does **not** provide confidentiality, encryption, or peer authentication.
+
+TLS 1.3 with certificate validation is planned for a future secure-transfer milestone.
+
+## CI
+
+GitHub Actions builds and tests the project on both Linux and Windows. The CI pipeline validates the CMake build and CTest suite on each supported platform.
+
+## Branch strategy
+
+```text
+main
+├── feature/native-installation
+├── feature/docker-deployment
+└── feature/file-integrity
+```
+
+- `main` — stable, reviewed integration branch
+- `feature/native-installation` — native installation/CLI work
+- `feature/docker-deployment` — Docker/containerization work
+- `feature/file-integrity` — SHA-256 and transfer-integrity work
+
+## Docker
+
+Docker deployment is intentionally separated from the native application branch. See `feature/docker-deployment` for the container image, Compose configuration, and Docker-specific run scripts.
 
 ## Assignment mapping
 
-The ATI assignment asks for TCP transfer, files up to 16 GB, integrity checks, error handling, cross-platform compatibility, and optionally improved bandwidth utilization. It also requests source code, build/run documentation, unit tests, and a project-description document with architecture, design considerations, C4 diagrams, and performance metrics.
+The implementation addresses the core assignment requirements:
+
+| Requirement | Implementation |
+|---|---|
+| TCP file transfer | `ft-client` / `ft-server` over TCP |
+| Large files | 64-bit sizes/offsets, 16 GiB application limit |
+| Integrity | End-to-end SHA-256 verification |
+| Error handling | Protocol/session validation and isolated client failures |
+| Cross-platform | POSIX sockets and Windows Winsock behind `TcpSocket` |
+| Efficient memory use | Bounded 4 MiB streaming chunks |
+| Testing | CMake/CTest unit tests + Python integration test |
+| Build | CMake |
+| Documentation | README + architecture/design document |
+| Containerization | Separate Docker deployment branch |
+
+Optional bandwidth optimization such as pipelining/windowing, performance benchmarking, retry/resume, and TLS are intentionally treated as subsequent milestones rather than mixed into the initial transfer foundation.
