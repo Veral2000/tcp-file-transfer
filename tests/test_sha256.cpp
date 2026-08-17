@@ -1,5 +1,6 @@
 #include "crypto/Sha256.hpp"
 
+#include <filesystem>
 #include <fstream>
 #include <stdexcept>
 #include <string>
