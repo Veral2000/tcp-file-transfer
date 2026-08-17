@@ -4,7 +4,7 @@ Cross-platform TCP file transfer utility implemented in C++17 for the ATI Platfo
 
 ## Current status
 
-**v0.1.0 — streaming TCP transfer with end-to-end SHA-256 verification**
+**v0.2.0 — streaming TCP transfer with SHA-256 integrity verification**
 
 Implemented:
 
@@ -17,9 +17,10 @@ Implemented:
 - 4 MiB default transfer chunks
 - Destination filename/path traversal protection
 - SHA-256 file integrity verification
-- Protocol validation and error handling
-- C++ unit tests with CMake + CTest
-- Python end-to-end integrity mismatch integration test
+- Protocol message for transmitting the expected SHA-256 digest
+- C++ unit tests for file I/O, protocol parsing, and SHA-256 known vectors
+- Python end-to-end negative integration test for SHA-256 mismatch detection
+- CMake + CTest build
 - Native installation of `ft-client` and `ft-server`
 - GitHub Actions CI for Linux and Windows builds/tests
 - Separate Docker deployment branch
@@ -215,27 +216,40 @@ All multi-byte fields are encoded in network byte order (big-endian).
 
 Messages currently supported:
 
-| Type | Purpose |
-|---|---|
-| `HELLO` | Starts a transfer session |
-| `FILE_INFO` | Announces filename and expected file size |
-| `FILE_HASH` | Announces expected SHA-256 digest |
-| `CHUNK` | Carries a bounded section of file data |
-| `TRANSFER_COMPLETE` | Indicates that all chunks have been sent |
-| `ERROR` | Reports a protocol or transfer error |
+- `HELLO`
+- `FILE_INFO`
+- `FILE_HASH`
+- `CHUNK`
+- `TRANSFER_COMPLETE`
+- `ERROR`
 
-TCP provides reliable, ordered byte-stream delivery. The application protocol is responsible for transfer semantics, framing, validation, integrity, and future resume/retry behavior.
+### SHA-256 integrity flow
 
-## Resource limits
+The client calculates the SHA-256 digest of the source file before transmission and sends it in the `FILE_HASH` message. The server receives the digest, writes the streamed file, calculates the SHA-256 digest of the received file, and compares the two values.
 
-Current protocol/application limits are defined centrally in `include/common/Types.hpp`:
+```text
+Client                              Server
+  |                                   |
+  | FILE_INFO                         |
+  |---------------------------------->| 
+  |                                   |
+  | FILE_HASH = SHA256(source)        |
+  |---------------------------------->| 
+  |                                   |
+  | CHUNK data                        |
+  |---------------------------------->| 
+  |                                   |
+  | TRANSFER_COMPLETE                 |
+  |---------------------------------->| 
+  |                                   |
+  |                         SHA256(received)
+  |                         compare hashes
+  |                                   |
+  |                         MATCH -> PASS
+  |                         MISMATCH -> ERROR
+```
 
-- Default chunk size: **4 MiB**
-- Maximum chunk size: **16 MiB**
-- Maximum file size: **16 GiB**
-- Maximum protocol filename length: **4096 bytes**
-
-Files are streamed rather than loaded completely into memory.
+TCP provides reliable, ordered byte-stream delivery. The application protocol is responsible for transfer semantics, framing, validation, integrity, and later resume/retry behavior.
 
 ## Testing
 
@@ -247,21 +261,39 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
-The CTest target covers file I/O, protocol behavior, and SHA-256 known vectors/file hashing.
+The C++ test executable covers:
 
-### Integrity mismatch integration test
+- File round-trip I/O
+- Oversized-file rejection
+- Protocol message parsing
+- SHA-256 known vectors
+- Incremental SHA-256 updates
+- SHA-256 file hashing
+- File-hash protocol payload validation
 
-The repository also contains a Python end-to-end negative test that sends the SHA-256 digest of one payload while transmitting a different payload. The server must detect the mismatch and remain available for subsequent client sessions.
+### SHA-256 integrity mismatch integration test
+
+The repository also contains a Python end-to-end negative test at:
+
+```text
+tests/integration/test_integrity_mismatch.py
+```
+
+It starts `ft-server`, sends the SHA-256 digest of an original payload while deliberately transmitting a different payload, and verifies that the server reports an integrity failure. The test uses the real application protocol rather than mocking the hashing logic.
+
+Run it after building the server:
 
 ```bash
 python3 tests/integration/test_integrity_mismatch.py ./build/ft-server
 ```
 
-Expected result:
+Expected output:
 
 ```text
 Integrity mismatch integration test passed.
 ```
+
+The integration test is intentionally a negative-path test and is separate from the C++ unit-test suite. It is currently intended to run on Linux/WSL where the build and runtime environment are already available.
 
 ## Design principles
 
@@ -270,37 +302,13 @@ Integrity mismatch integration test passed.
 3. Keep platform-specific socket details behind one abstraction.
 4. Validate protocol input before allocating or writing data.
 5. Keep the protocol explicit and versioned so it can evolve.
-6. Use end-to-end SHA-256 verification rather than relying only on TCP delivery guarantees.
-7. Keep the server persistent and isolate individual client-session failures.
-8. Measure performance before introducing application-level pipelining.
-
-## Security considerations
-
-The current implementation provides protocol validation, filename/path traversal protection, file-size limits, and end-to-end SHA-256 integrity verification. It does **not** provide confidentiality, encryption, or peer authentication.
-
-TLS 1.3 with certificate validation is planned for a future secure-transfer milestone.
-
-## CI
-
-GitHub Actions builds and tests the project on both Linux and Windows. The CI pipeline validates the CMake build and CTest suite on each supported platform.
-
-## Branch strategy
-
-```text
-main
-├── feature/native-installation
-├── feature/docker-deployment
-└── feature/file-integrity
-```
-
-- `main` — stable, reviewed integration branch
-- `feature/native-installation` — native installation/CLI work
-- `feature/docker-deployment` — Docker/containerization work
-- `feature/file-integrity` — SHA-256 and transfer-integrity work
+6. Measure performance before introducing application-level pipelining.
+7. Treat the server as a persistent service and the client as a one-shot transfer operation.
+8. Verify received content independently from TCP transport reliability.
 
 ## Docker
 
-Docker deployment is intentionally separated from the native application branch. See `feature/docker-deployment` for the container image, Compose configuration, and Docker-specific run scripts.
+The current foundation validates protocol boundaries, destination filenames, and file integrity but does not yet provide confidentiality or peer authentication. TLS 1.3 and certificate validation are planned for the secure-transfer milestone.
 
 ## Assignment mapping
 

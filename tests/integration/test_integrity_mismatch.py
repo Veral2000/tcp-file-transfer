@@ -12,7 +12,6 @@ Usage:
 from __future__ import annotations
 
 import hashlib
-import os
 from pathlib import Path
 import shutil
 import socket
@@ -63,6 +62,24 @@ def send_corrupted_transfer(port: int) -> None:
         send_message(sock, TRANSFER_COMPLETE)
 
 
+def wait_for_server(port: int, server: subprocess.Popen[str]) -> None:
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if server.poll() is not None:
+            stdout, stderr = server.communicate()
+            raise RuntimeError(
+                "ft-server exited before accepting connections:\n"
+                f"stdout:\n{stdout}\n"
+                f"stderr:\n{stderr}"
+            )
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                return
+        except OSError:
+            time.sleep(0.05)
+    raise RuntimeError("timed out waiting for ft-server")
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print(f"Usage: {sys.argv[0]} <ft-server-path>", file=sys.stderr)
@@ -86,33 +103,15 @@ def main() -> int:
     )
 
     try:
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            if server.poll() is not None:
-                stdout, stderr = server.communicate()
-                raise RuntimeError(
-                    "ft-server exited before accepting connections:\n"
-                    f"stdout:\n{stdout}\n"
-                    f"stderr:\n{stderr}"
-                )
-            try:
-                with socket.create_connection(("127.0.0.1", port), timeout=0.2):
-                    break
-            except OSError:
-                time.sleep(0.05)
-        else:
-            raise RuntimeError("timed out waiting for ft-server")
-
+        wait_for_server(port, server)
+        # The readiness connection is intentionally closed without a protocol
+        # message. Give the sequential server a moment to finish that session
+        # before opening the real test connection.
+        time.sleep(0.1)
         send_corrupted_transfer(port)
+        time.sleep(0.2)
 
-        deadline = time.monotonic() + 5
-        stderr = ""
-        while time.monotonic() < deadline:
-            if server.poll() is not None:
-                break
-            time.sleep(0.05)
-
-        # The server is expected to remain alive after rejecting one client.
+        # The server must remain available after rejecting a client session.
         if server.poll() is not None:
             stdout, stderr = server.communicate()
             raise RuntimeError(
@@ -121,18 +120,15 @@ def main() -> int:
                 f"stderr:\n{stderr}"
             )
 
-        # Give the server a short period to flush its error message.
-        time.sleep(0.1)
-        if server.stderr is not None:
-            try:
-                stderr = os.read(server.stderr.fileno(), 8192).decode(errors="replace")
-            except (BlockingIOError, OSError):
-                stderr = ""
+        # Stop the test server so communicate() can safely collect its output.
+        server.terminate()
+        stdout, stderr = server.communicate(timeout=2)
 
         if "SHA-256 integrity check failed" not in stderr:
             raise RuntimeError(
                 "server did not report the expected SHA-256 integrity failure:\n"
-                + stderr
+                f"stdout:\n{stdout}\n"
+                f"stderr:\n{stderr}"
             )
 
         print("Integrity mismatch integration test passed.")
