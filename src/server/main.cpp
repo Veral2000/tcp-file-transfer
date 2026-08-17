@@ -1,3 +1,4 @@
+#include "crypto/Sha256.hpp"
 #include "network/TcpSocket.hpp"
 #include "protocol/Protocol.hpp"
 #include "transfer/FileWriter.hpp"
@@ -26,11 +27,19 @@ void handle_client(tcpft::network::TcpSocket& client,
     if (info_header.type != tcpft::protocol::MessageType::FileInfo) {
         throw std::runtime_error("expected FILE_INFO message");
     }
-
     const auto info = tcpft::protocol::parse_file_info(
         tcpft::protocol::receive_payload(client, info_header));
 
+    const auto hash_header = tcpft::protocol::receive_header(client);
+    if (hash_header.type != tcpft::protocol::MessageType::FileHash) {
+        throw std::runtime_error("expected FILE_HASH message");
+    }
+    const auto expected_hash = tcpft::protocol::parse_file_hash(
+        tcpft::protocol::receive_payload(client, hash_header));
+
     std::cout << "Receiving '" << info.filename << "' (" << info.size << " bytes)\n";
+    std::cout << "Expected SHA-256: " << tcpft::crypto::to_hex(expected_hash) << '\n';
+
     tcpft::transfer::FileWriter writer(output_dir, info);
     tcpft::ChunkIndex expected_chunk = 0;
 
@@ -40,9 +49,7 @@ void handle_client(tcpft::network::TcpSocket& client,
 
         if (header.type == tcpft::protocol::MessageType::Chunk) {
             const auto chunk = tcpft::protocol::parse_chunk(payload);
-            if (chunk.index != expected_chunk) {
-                throw std::runtime_error("unexpected chunk index");
-            }
+            if (chunk.index != expected_chunk) throw std::runtime_error("unexpected chunk index");
             writer.write_chunk(chunk.offset, chunk.data);
             ++expected_chunk;
             std::cout << "\rReceived " << writer.path().filename().string()
@@ -50,7 +57,15 @@ void handle_client(tcpft::network::TcpSocket& client,
         } else if (header.type == tcpft::protocol::MessageType::TransferComplete) {
             if (!payload.empty()) throw std::runtime_error("invalid completion payload");
             writer.finalize();
-            std::cout << "\nTransfer complete: " << writer.path() << "\n";
+
+            const auto actual_hash = tcpft::crypto::hash_file(writer.path());
+            std::cout << "\nActual SHA-256:   " << tcpft::crypto::to_hex(actual_hash) << '\n';
+            if (actual_hash != expected_hash) {
+                throw std::runtime_error("SHA-256 integrity check failed");
+            }
+
+            std::cout << "Integrity check: PASS\n";
+            std::cout << "Transfer complete: " << writer.path() << "\n";
             return;
         } else if (header.type == tcpft::protocol::MessageType::Error) {
             throw std::runtime_error("client error: " + tcpft::protocol::parse_error(payload));
@@ -77,9 +92,6 @@ int main(int argc, char* argv[]) {
         listener.bind_and_listen(port);
         std::cout << "Listening on TCP port " << port << "...\n";
 
-        // Keep the listener alive for multiple clients. A short-lived connection
-        // from a Docker health check may connect and close without sending a
-        // protocol message; that must not terminate the server.
         while (true) {
             try {
                 auto client = listener.accept();
