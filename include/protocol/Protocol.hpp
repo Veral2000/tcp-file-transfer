@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/Types.hpp"
+#include "crypto/Sha256.hpp"
 #include "network/TcpSocket.hpp"
 
 #include <cstdint>
@@ -20,6 +21,7 @@ enum class MessageType : std::uint8_t {
     Chunk = 3,
     TransferComplete = 4,
     Error = 5,
+    FileHash = 6,
 };
 
 struct MessageHeader {
@@ -42,11 +44,13 @@ std::vector<std::uint8_t> receive_payload(network::TcpSocket& socket,
 
 void send_hello(network::TcpSocket& socket);
 void send_file_info(network::TcpSocket& socket, const FileInfo& info);
+void send_file_hash(network::TcpSocket& socket, const crypto::Sha256Digest& digest);
 void send_chunk(network::TcpSocket& socket, const Chunk& chunk);
 void send_transfer_complete(network::TcpSocket& socket);
 void send_error(network::TcpSocket& socket, const std::string& message);
 
 FileInfo parse_file_info(const std::vector<std::uint8_t>& payload);
+crypto::Sha256Digest parse_file_hash(const std::vector<std::uint8_t>& payload);
 Chunk parse_chunk(const std::vector<std::uint8_t>& payload);
 std::string parse_error(const std::vector<std::uint8_t>& payload);
 
