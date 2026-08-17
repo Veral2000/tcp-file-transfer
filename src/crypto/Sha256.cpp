@@ -1,5 +1,6 @@
 #include "crypto/Sha256.hpp"
 
+#include <algorithm>
 #include <array>
 #include <fstream>
 #include <iomanip>
@@ -19,10 +20,6 @@ constexpr std::array<std::uint32_t, 64> kRoundConstants = {
     0x983e5152U, 0xa831c66dU, 0xb00327c8U, 0xbf597fc7U,
     0xc6e00bf3U, 0xd5a79147U, 0x06ca6351U, 0x14292967U,
     0x27b70a85U, 0x2e1b2138U, 0x4d2c6dfcU, 0x53380d13U,
-    0x650a7354U, 0x766a0abbU, 0x81c2c92eU, 0x92722c85U,
-    0xa2bfe8a1U, 0xa81a664bU, 0xc24b8b70U, 0xc76c51a3U,
-    0xd192e819U, 0xd6990624U, 0xf40e3585U, 0x106aa070U,
-    0x19a4c116U, 0x1e376c08U, 0x2748774cU, 0x34b0bcb5U,
     0x391c0cb3U, 0x4ed8aa4aU, 0x5b9cca4fU, 0x682e6ff3U,
     0x748f82eeU, 0x78a5636fU, 0x84c87814U, 0x8cc70208U,
     0x90befffaU, 0xa4506cebU, 0xbef9a3f7U, 0xc67178f2U
@@ -31,30 +28,12 @@ constexpr std::array<std::uint32_t, 64> kRoundConstants = {
 constexpr std::uint32_t rotr(std::uint32_t value, unsigned int amount) {
     return (value >> amount) | (value << (32U - amount));
 }
-
-constexpr std::uint32_t ch(std::uint32_t x, std::uint32_t y, std::uint32_t z) {
-    return (x & y) ^ (~x & z);
-}
-
-constexpr std::uint32_t maj(std::uint32_t x, std::uint32_t y, std::uint32_t z) {
-    return (x & y) ^ (x & z) ^ (y & z);
-}
-
-constexpr std::uint32_t big_sigma0(std::uint32_t x) {
-    return rotr(x, 2U) ^ rotr(x, 13U) ^ rotr(x, 22U);
-}
-
-constexpr std::uint32_t big_sigma1(std::uint32_t x) {
-    return rotr(x, 6U) ^ rotr(x, 11U) ^ rotr(x, 25U);
-}
-
-constexpr std::uint32_t small_sigma0(std::uint32_t x) {
-    return rotr(x, 7U) ^ rotr(x, 18U) ^ (x >> 3U);
-}
-
-constexpr std::uint32_t small_sigma1(std::uint32_t x) {
-    return rotr(x, 17U) ^ rotr(x, 19U) ^ (x >> 10U);
-}
+constexpr std::uint32_t ch(std::uint32_t x, std::uint32_t y, std::uint32_t z) { return (x & y) ^ (~x & z); }
+constexpr std::uint32_t maj(std::uint32_t x, std::uint32_t y, std::uint32_t z) { return (x & y) ^ (x & z) ^ (y & z); }
+constexpr std::uint32_t big_sigma0(std::uint32_t x) { return rotr(x, 2U) ^ rotr(x, 13U) ^ rotr(x, 22U); }
+constexpr std::uint32_t big_sigma1(std::uint32_t x) { return rotr(x, 6U) ^ rotr(x, 11U) ^ rotr(x, 25U); }
+constexpr std::uint32_t small_sigma0(std::uint32_t x) { return rotr(x, 7U) ^ rotr(x, 18U) ^ (x >> 3U); }
+constexpr std::uint32_t small_sigma1(std::uint32_t x) { return rotr(x, 17U) ^ rotr(x, 19U) ^ (x >> 10U); }
 
 } // namespace
 
@@ -64,7 +43,6 @@ Sha256::Sha256()
 
 void Sha256::transform(const std::uint8_t* block) {
     std::array<std::uint32_t, 64> schedule{};
-
     for (std::size_t i = 0; i < 16U; ++i) {
         const std::size_t p = i * 4U;
         schedule[i] = (static_cast<std::uint32_t>(block[p]) << 24U) |
@@ -72,91 +50,53 @@ void Sha256::transform(const std::uint8_t* block) {
                       (static_cast<std::uint32_t>(block[p + 2U]) << 8U) |
                       static_cast<std::uint32_t>(block[p + 3U]);
     }
-
     for (std::size_t i = 16U; i < 64U; ++i) {
         schedule[i] = small_sigma1(schedule[i - 2U]) + schedule[i - 7U] +
                       small_sigma0(schedule[i - 15U]) + schedule[i - 16U];
     }
-
-    auto a = state_[0];
-    auto b = state_[1];
-    auto c = state_[2];
-    auto d = state_[3];
-    auto e = state_[4];
-    auto f = state_[5];
-    auto g = state_[6];
-    auto h = state_[7];
-
+    auto a = state_[0]; auto b = state_[1]; auto c = state_[2]; auto d = state_[3];
+    auto e = state_[4]; auto f = state_[5]; auto g = state_[6]; auto h = state_[7];
     for (std::size_t i = 0; i < 64U; ++i) {
         const auto t1 = h + big_sigma1(e) + ch(e, f, g) + kRoundConstants[i] + schedule[i];
         const auto t2 = big_sigma0(a) + maj(a, b, c);
-        h = g;
-        g = f;
-        f = e;
-        e = d + t1;
-        d = c;
-        c = b;
-        b = a;
-        a = t1 + t2;
+        h = g; g = f; f = e; e = d + t1; d = c; c = b; b = a; a = t1 + t2;
     }
-
-    state_[0] += a;
-    state_[1] += b;
-    state_[2] += c;
-    state_[3] += d;
-    state_[4] += e;
-    state_[5] += f;
-    state_[6] += g;
-    state_[7] += h;
+    state_[0] += a; state_[1] += b; state_[2] += c; state_[3] += d;
+    state_[4] += e; state_[5] += f; state_[6] += g; state_[7] += h;
 }
 
 void Sha256::update(const void* data, std::size_t size) {
     if (finalized_) throw std::logic_error("cannot update finalized SHA-256 context");
     if (size == 0U) return;
     if (data == nullptr) throw std::invalid_argument("SHA-256 data pointer is null");
-
     const auto* bytes = static_cast<const std::uint8_t*>(data);
     bit_count_ += static_cast<std::uint64_t>(size) * 8ULL;
-
     while (size > 0U) {
         const std::size_t available = 64U - buffer_size_;
         const std::size_t count = size < available ? size : available;
         std::copy_n(bytes, count, buffer_.begin() + static_cast<std::ptrdiff_t>(buffer_size_));
-        buffer_size_ += count;
-        bytes += count;
-        size -= count;
-
-        if (buffer_size_ == 64U) {
-            transform(buffer_.data());
-            buffer_size_ = 0U;
-        }
+        buffer_size_ += count; bytes += count; size -= count;
+        if (buffer_size_ == 64U) { transform(buffer_.data()); buffer_size_ = 0U; }
     }
 }
 
-void Sha256::update(const std::vector<std::uint8_t>& data) {
-    update(data.data(), data.size());
-}
+void Sha256::update(const std::vector<std::uint8_t>& data) { update(data.data(), data.size()); }
 
 Sha256Digest Sha256::finalize() {
     if (finalized_) throw std::logic_error("SHA-256 context already finalized");
     finalized_ = true;
-
     const std::uint64_t original_bit_count = bit_count_;
     buffer_[buffer_size_++] = 0x80U;
-
     if (buffer_size_ > 56U) {
         std::fill(buffer_.begin() + static_cast<std::ptrdiff_t>(buffer_size_), buffer_.end(), 0U);
         transform(buffer_.data());
         buffer_size_ = 0U;
     }
-
     std::fill(buffer_.begin() + static_cast<std::ptrdiff_t>(buffer_size_), buffer_.begin() + 56, 0U);
-    for (int shift = 56; shift >= 0; shift -= 8) {
-        buffer_[56U + static_cast<std::size_t>((56 - shift) / 8)] =
-            static_cast<std::uint8_t>((original_bit_count >> shift) & 0xFFU);
+    for (std::size_t i = 0; i < 8U; ++i) {
+        buffer_[56U + i] = static_cast<std::uint8_t>(original_bit_count >> (56U - i * 8U));
     }
     transform(buffer_.data());
-
     Sha256Digest digest{};
     for (std::size_t i = 0; i < state_.size(); ++i) {
         digest[i * 4U] = static_cast<std::uint8_t>(state_[i] >> 24U);
@@ -167,14 +107,11 @@ Sha256Digest Sha256::finalize() {
     return digest;
 }
 
-std::string Sha256::finalize_hex() {
-    return to_hex(finalize());
-}
+std::string Sha256::finalize_hex() { return to_hex(finalize()); }
 
 Sha256Digest hash_file(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
     if (!input.is_open()) throw std::runtime_error("failed to open file for SHA-256: " + path.string());
-
     Sha256 hasher;
     std::array<char, 64U * 1024U> buffer{};
     while (input) {
